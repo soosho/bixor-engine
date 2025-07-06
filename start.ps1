@@ -34,7 +34,7 @@ if ($postgres_ready -match "accepting connections" -and $redis_ready -eq "PONG")
     exit 1
 }
 
-# Set environment variables
+# Set environment variables (ONLY the ones actually used by the code)
 Write-Host "⚙️ Setting environment variables..." -ForegroundColor Blue
 $env:DB_HOST = "localhost"
 $env:DB_PORT = "5432"
@@ -45,11 +45,7 @@ $env:REDIS_HOST = "localhost"
 $env:REDIS_PORT = "6379"
 $env:REDIS_PASSWORD = ""
 $env:SERVER_PORT = "8080"
-$env:GIN_MODE = "debug"
-$env:JWT_SECRET = "your-super-secret-jwt-key-change-this-in-production"
-$env:ENABLE_TRADING = "true"
-$env:MAX_ORDERS_PER_USER = "1000"
-$env:ORDER_TIMEOUT = "3600"
+$env:ENVIRONMENT = "development"
 
 # Install Go dependencies
 Write-Host "📦 Installing Go dependencies..." -ForegroundColor Blue

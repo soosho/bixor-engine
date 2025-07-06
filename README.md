@@ -222,16 +222,28 @@ const ws = new WebSocket('ws://localhost:8080/api/v1/ws');
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| **Server** | | |
 | `SERVER_PORT` | `8080` | HTTP server port |
+| `SERVER_READ_TIMEOUT` | `10s` | HTTP read timeout |
+| `SERVER_WRITE_TIMEOUT` | `10s` | HTTP write timeout |
+| `SERVER_IDLE_TIMEOUT` | `60s` | HTTP idle timeout |
+| `ENVIRONMENT` | `development` | Environment mode |
+| **Database** | | |
 | `DB_HOST` | `localhost` | PostgreSQL host |
 | `DB_PORT` | `5432` | PostgreSQL port |
 | `DB_USER` | `postgres` | Database user |
 | `DB_PASSWORD` | `postgres` | Database password |
 | `DB_NAME` | `bixor_db` | Database name |
+| `DB_SSLMODE` | `disable` | SSL mode |
+| `DB_MAX_OPEN` | `25` | Max open connections |
+| `DB_MAX_IDLE` | `5` | Max idle connections |
+| `DB_MAX_LIFETIME` | `5m` | Connection max lifetime |
+| **Redis** | | |
 | `REDIS_HOST` | `localhost` | Redis host |
 | `REDIS_PORT` | `6379` | Redis port |
-| `DEFAULT_TAKER_FEE` | `0.001` | Default taker fee (0.1%) |
-| `DEFAULT_MAKER_FEE` | `0.001` | Default maker fee (0.1%) |
+| `REDIS_PASSWORD` | `` | Redis password |
+| `REDIS_DATABASE` | `0` | Redis database number |
+| `REDIS_POOL_SIZE` | `10` | Redis connection pool size |
 
 ## Performance
 
