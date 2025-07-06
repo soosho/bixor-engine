@@ -1,0 +1,130 @@
+package models
+
+import (
+	"time"
+
+	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
+)
+
+/*
+Example: Wallet domain models
+This file shows how to add new models for wallet-related functionality.
+
+To use these models:
+1. Rename this file from wallet.go.example to wallet.go
+2. Add the models to database.AutoMigrate() in pkg/database/database.go
+3. Create corresponding API handlers in pkg/api/
+
+Steps to add to AutoMigrate:
+```go
+// In pkg/database/database.go
+err := DB.AutoMigrate(
+    &models.User{},
+    &models.Balance{},
+    &models.Market{},
+    &models.Order{},
+    &models.Trade{},
+    &models.MarketData{},
+    // Add new models here:
+    &models.Deposit{},
+    &models.Withdrawal{},
+    &models.Transaction{},
+)
+```
+*/
+
+// TransactionType represents the type of transaction
+type TransactionType string
+
+const (
+	TransactionTypeDeposit    TransactionType = "deposit"
+	TransactionTypeWithdrawal TransactionType = "withdrawal"
+	TransactionTypeTrade      TransactionType = "trade"
+	TransactionTypeFee        TransactionType = "fee"
+)
+
+// TransactionStatus represents the status of a transaction
+type TransactionStatus string
+
+const (
+	TransactionStatusPending   TransactionStatus = "pending"
+	TransactionStatusConfirmed TransactionStatus = "confirmed"
+	TransactionStatusFailed    TransactionStatus = "failed"
+	TransactionStatusCancelled TransactionStatus = "cancelled"
+)
+
+// Deposit represents a cryptocurrency deposit
+type Deposit struct {
+	ID            uint                `gorm:"primaryKey" json:"id"`
+	UserID        uint                `gorm:"not null;index" json:"user_id"`
+	Asset         string              `gorm:"not null;size:10" json:"asset"`
+	Amount        decimal.Decimal     `gorm:"type:decimal(20,8);not null" json:"amount"`
+	Address       string              `gorm:"not null" json:"address"`
+	TxHash        string              `gorm:"unique" json:"tx_hash"`
+	Status        TransactionStatus   `gorm:"not null;default:'pending'" json:"status"`
+	Confirmations int                 `gorm:"default:0" json:"confirmations"`
+	CreatedAt     time.Time           `json:"created_at"`
+	UpdatedAt     time.Time           `json:"updated_at"`
+	ConfirmedAt   *time.Time          `json:"confirmed_at,omitempty"`
+
+	// Relationships
+	User User `gorm:"foreignKey:UserID" json:"-"`
+}
+
+// Withdrawal represents a cryptocurrency withdrawal
+type Withdrawal struct {
+	ID        uint              `gorm:"primaryKey" json:"id"`
+	UserID    uint              `gorm:"not null;index" json:"user_id"`
+	Asset     string            `gorm:"not null;size:10" json:"asset"`
+	Amount    decimal.Decimal   `gorm:"type:decimal(20,8);not null" json:"amount"`
+	Fee       decimal.Decimal   `gorm:"type:decimal(20,8);default:0" json:"fee"`
+	Address   string            `gorm:"not null" json:"address"`
+	TxHash    string            `gorm:"unique" json:"tx_hash,omitempty"`
+	Status    TransactionStatus `gorm:"not null;default:'pending'" json:"status"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
+	SentAt    *time.Time        `json:"sent_at,omitempty"`
+
+	// Relationships
+	User User `gorm:"foreignKey:UserID" json:"-"`
+}
+
+// Transaction represents a general transaction record
+type Transaction struct {
+	ID            uint            `gorm:"primaryKey" json:"id"`
+	UserID        uint            `gorm:"not null;index" json:"user_id"`
+	Type          TransactionType `gorm:"not null" json:"type"`
+	Asset         string          `gorm:"not null;size:10" json:"asset"`
+	Amount        decimal.Decimal `gorm:"type:decimal(20,8);not null" json:"amount"`
+	BalanceBefore decimal.Decimal `gorm:"type:decimal(20,8)" json:"balance_before"`
+	BalanceAfter  decimal.Decimal `gorm:"type:decimal(20,8)" json:"balance_after"`
+	ReferenceID   string          `gorm:"index" json:"reference_id"` // Reference to order, deposit, withdrawal, etc.
+	Description   string          `json:"description"`
+	CreatedAt     time.Time       `gorm:"index" json:"created_at"`
+
+	// Relationships
+	User User `gorm:"foreignKey:UserID" json:"-"`
+}
+
+// BeforeCreate hooks
+func (d *Deposit) BeforeCreate(tx *gorm.DB) error {
+	// You can add validation logic here
+	if d.Amount.LessThanOrEqual(decimal.Zero) {
+		return gorm.ErrInvalidData
+	}
+	return nil
+}
+
+func (w *Withdrawal) BeforeCreate(tx *gorm.DB) error {
+	// You can add validation logic here
+	if w.Amount.LessThanOrEqual(decimal.Zero) {
+		return gorm.ErrInvalidData
+	}
+	return nil
+}
+
+// TableName methods
+func (Deposit) TableName() string     { return "deposits" }
+func (Withdrawal) TableName() string  { return "withdrawals" }
+func (Transaction) TableName() string { return "transactions" } 

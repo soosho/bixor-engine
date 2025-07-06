@@ -278,7 +278,13 @@ bixor-engine/
 │   ├── cache/                  # Redis caching
 │   ├── config/                 # Configuration
 │   ├── database/               # Database layer
-│   └── models/                 # Data models
+│   └── models/                 # Data models (organized by domain)
+│       ├── models.go           # Package overview and docs
+│       ├── user.go             # User and Balance models
+│       ├── market.go           # Market and MarketData models
+│       ├── trading.go          # Order and Trade models
+│       ├── utils.go            # Shared utility functions
+│       └── wallet.go.example   # Example for adding new domains
 ├── go.mod                      # Go module definition
 └── LICENSE                     # MIT License
 ```
