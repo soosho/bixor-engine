@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"https://github.com/soosho/bixor-engine/pkg/config"
+	"bixor-engine/pkg/config"
 	"github.com/go-redis/redis/v8"
 	"github.com/sirupsen/logrus"
 )
@@ -16,8 +16,24 @@ var (
 	ctx         = context.Background()
 )
 
+// RedisCache wraps the redis client with common cache operations
+type RedisCache struct {
+	client *redis.Client
+	ctx    context.Context
+}
+
+// Client returns the underlying redis client
+func (r *RedisCache) Client() *redis.Client {
+	return r.client
+}
+
+// Context returns the context
+func (r *RedisCache) Context() context.Context {
+	return r.ctx
+}
+
 // Initialize Redis connection
-func Initialize(cfg *config.Config) error {
+func Initialize(cfg *config.Config) (*RedisCache, error) {
 	RedisClient = redis.NewClient(&redis.Options{
 		Addr:         cfg.GetRedisURL(),
 		Password:     cfg.Redis.Password,
@@ -32,10 +48,52 @@ func Initialize(cfg *config.Config) error {
 	// Test connection
 	_, err := RedisClient.Ping(ctx).Result()
 	if err != nil {
-		return fmt.Errorf("failed to connect to Redis: %w", err)
+		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 	}
 
 	logrus.Info("Redis connected successfully")
+	
+	cache := &RedisCache{
+		client: RedisClient,
+		ctx:    ctx,
+	}
+	
+	return cache, nil
+}
+
+// Get retrieves a value from Redis (for RedisCache instance)
+func (r *RedisCache) Get(key string) (string, error) {
+	val, err := r.client.Get(r.ctx, key).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return "", fmt.Errorf("key %s not found", key)
+		}
+		return "", fmt.Errorf("failed to get key %s: %w", key, err)
+	}
+	return val, nil
+}
+
+// Set stores a value in Redis (for RedisCache instance)
+func (r *RedisCache) Set(key string, value interface{}, expiration time.Duration) error {
+	var stringValue string
+	switch v := value.(type) {
+	case string:
+		stringValue = v
+	case []byte:
+		stringValue = string(v)
+	default:
+		jsonValue, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Errorf("failed to marshal value: %w", err)
+		}
+		stringValue = string(jsonValue)
+	}
+
+	err := r.client.Set(r.ctx, key, stringValue, expiration).Err()
+	if err != nil {
+		return fmt.Errorf("failed to set key %s: %w", key, err)
+	}
+
 	return nil
 }
 

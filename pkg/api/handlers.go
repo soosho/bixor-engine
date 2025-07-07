@@ -1,22 +1,61 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
 
-	"https://github.com/soosho/bixor-engine/pkg/cache"
-	"https://github.com/soosho/bixor-engine/pkg/database"
-	"https://github.com/soosho/bixor-engine/pkg/models"
+	"bixor-engine/internal/matching"
+	"bixor-engine/pkg/cache"
+	"bixor-engine/pkg/database"
+	"bixor-engine/pkg/middleware"
+	"bixor-engine/pkg/models"
+	"bixor-engine/pkg/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 )
 
+// TradingHandlers contains trading-related handlers with matching engine
+type TradingHandlers struct {
+	engine *matching.MatchingEngine
+	hub    *websocket.WebSocketHub
+}
+
+// NewTradingHandlers creates new trading handlers
+func NewTradingHandlers(engine *matching.MatchingEngine, hub *websocket.WebSocketHub) *TradingHandlers {
+	return &TradingHandlers{
+		engine: engine,
+		hub:    hub,
+	}
+}
+
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true // Allow all origins for development
 	},
+}
+
+var globalWSHub *websocket.WebSocketHub
+var globalTradingHandlers *TradingHandlers
+
+// GetWebSocketHub returns the global WebSocket hub instance
+func GetWebSocketHub() *websocket.WebSocketHub {
+	if globalWSHub == nil {
+		globalWSHub = websocket.NewHub()
+	}
+	return globalWSHub
+}
+
+// GetTradingHandlers returns the global trading handlers instance
+func GetTradingHandlers() *TradingHandlers {
+	return globalTradingHandlers
+}
+
+// SetTradingHandlers sets the global trading handlers instance
+func SetTradingHandlers(handlers *TradingHandlers) {
+	globalTradingHandlers = handlers
 }
 
 // Market Handlers
@@ -69,6 +108,7 @@ func GetOrderBook(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"data":    depth,
+			"limit":   limit, // Include limit in response
 		})
 		return
 	}
@@ -81,6 +121,7 @@ func GetOrderBook(c *gin.Context) {
 			"bids":      []interface{}{},
 			"asks":      []interface{}{},
 			"timestamp": time.Now().Unix(),
+			"limit":     limit, // Include limit in response
 		},
 	})
 }
@@ -145,6 +186,7 @@ func GetKlines(c *gin.Context) {
 		"data": gin.H{
 			"market_id": marketID,
 			"interval":  interval,
+			"limit":     limit,
 			"klines":    []interface{}{},
 		},
 	})
@@ -154,13 +196,19 @@ func GetKlines(c *gin.Context) {
 
 // CreateOrder creates a new trading order
 func CreateOrder(c *gin.Context) {
+	// Get authenticated user from context
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
 	var req struct {
 		MarketID string `json:"market_id" binding:"required"`
 		Side     int8   `json:"side" binding:"required"`
 		Type     string `json:"type" binding:"required"`
 		Price    string `json:"price"`
 		Size     string `json:"size" binding:"required"`
-		UserID   uint   `json:"user_id" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -175,21 +223,109 @@ func CreateOrder(c *gin.Context) {
 		return
 	}
 
-	// Create order
+	// Validate order side and type
+	if req.Side != 1 && req.Side != 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid order side (1=buy, 2=sell)"})
+		return
+	}
+
+	// Validate order price for limit orders
+	price := models.DecimalFromString(req.Price)
+	size := models.DecimalFromString(req.Size)
+	
+	if req.Type == "limit" && price.IsZero() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Price required for limit orders"})
+		return
+	}
+
+	if size.IsZero() || size.IsNegative() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid order size"})
+		return
+	}
+
+	// Check user balance before creating order
+	if req.Side == 1 { // Buy order - check quote asset balance
+		var balance models.Balance
+		requiredAmount := price.Mul(size)
+		if err := database.GetDB().Where("user_id = ? AND asset = ?", user.ID, market.QuoteAsset).First(&balance).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Insufficient balance"})
+			return
+		}
+		if balance.Available.LessThan(requiredAmount) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Insufficient balance"})
+			return
+		}
+	} else { // Sell order - check base asset balance
+		var balance models.Balance
+		if err := database.GetDB().Where("user_id = ? AND asset = ?", user.ID, market.BaseAsset).First(&balance).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Insufficient balance"})
+			return
+		}
+		if balance.Available.LessThan(size) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Insufficient balance"})
+			return
+		}
+	}
+
+	// Create order using authenticated user ID
+	orderID := generateOrderID()
 	order := models.Order{
-		ID:       generateOrderID(),
-		UserID:   req.UserID,
+		ID:       orderID,
+		UserID:   user.ID,
 		MarketID: req.MarketID,
 		Side:     models.OrderSide(req.Side),
 		Type:     models.OrderType(req.Type),
 		Status:   models.OrderStatusPending,
-		Price:    models.DecimalFromString(req.Price),
-		Size:     models.DecimalFromString(req.Size),
+		Price:    price,
+		Size:     size,
 	}
 
+	// Save order to database first
 	if err := database.GetDB().Create(&order).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create order"})
 		return
+	}
+
+	// Get trading handlers
+	tradingHandlers := GetTradingHandlers()
+	if tradingHandlers != nil && tradingHandlers.engine != nil {
+		// Convert to matching engine order format
+		matchingOrder := &matching.Order{
+			ID:        orderID,
+			MarketID:  req.MarketID,
+			Side:      matching.Side(req.Side),
+			Price:     price,
+			Size:      size,
+			Type:      matching.OrderType(req.Type),
+			UserID:    int64(user.ID),
+			CreatedAt: time.Now(),
+		}
+
+		// Submit order to matching engine
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		
+		if err := tradingHandlers.engine.AddOrder(ctx, matchingOrder); err != nil {
+			// If matching engine fails, mark order as failed but don't delete it
+			order.Status = models.OrderStatusFailed
+			database.GetDB().Save(&order)
+			
+			logrus.Errorf("Failed to submit order to matching engine: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to submit order to matching engine"})
+			return
+		}
+
+		// Update order status to open
+		order.Status = models.OrderStatusOpen
+		database.GetDB().Save(&order)
+
+		// Broadcast order update to user via WebSocket
+		if tradingHandlers.hub != nil {
+			tradingHandlers.hub.BroadcastUserOrderUpdate(user.ID, order)
+		}
+	} else {
+		// No matching engine available, keep order as pending
+		logrus.Warn("No matching engine available, order remains pending")
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
@@ -200,20 +336,18 @@ func CreateOrder(c *gin.Context) {
 
 // GetOrders returns user's orders
 func GetOrders(c *gin.Context) {
-	userIDStr := c.Query("user_id")
+	// Get authenticated user from context
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
 	marketID := c.Query("market_id")
 	status := c.Query("status")
 	
-	query := database.GetDB().Model(&models.Order{})
-	
-	if userIDStr != "" {
-		userID, err := strconv.ParseUint(userIDStr, 10, 32)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user_id"})
-			return
-		}
-		query = query.Where("user_id = ?", userID)
-	}
+	// Always filter by authenticated user ID
+	query := database.GetDB().Model(&models.Order{}).Where("user_id = ?", user.ID)
 	
 	if marketID != "" {
 		query = query.Where("market_id = ?", marketID)
@@ -237,10 +371,17 @@ func GetOrders(c *gin.Context) {
 
 // GetOrder returns a specific order
 func GetOrder(c *gin.Context) {
+	// Get authenticated user from context
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
 	orderID := c.Param("orderId")
 	
 	var order models.Order
-	if err := database.GetDB().Where("id = ?", orderID).First(&order).Error; err != nil {
+	if err := database.GetDB().Where("id = ? AND user_id = ?", orderID, user.ID).First(&order).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
 		return
 	}
@@ -253,10 +394,17 @@ func GetOrder(c *gin.Context) {
 
 // CancelOrder cancels an order
 func CancelOrder(c *gin.Context) {
+	// Get authenticated user from context
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
 	orderID := c.Param("orderId")
 	
 	var order models.Order
-	if err := database.GetDB().Where("id = ?", orderID).First(&order).Error; err != nil {
+	if err := database.GetDB().Where("id = ? AND user_id = ?", orderID, user.ID).First(&order).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
 		return
 	}
@@ -266,6 +414,19 @@ func CancelOrder(c *gin.Context) {
 		return
 	}
 
+	// Get trading handlers and cancel from matching engine first
+	tradingHandlers := GetTradingHandlers()
+	if tradingHandlers != nil && tradingHandlers.engine != nil && order.Status == models.OrderStatusOpen {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		
+		if err := tradingHandlers.engine.CancelOrder(ctx, order.MarketID, orderID); err != nil {
+			logrus.Errorf("Failed to cancel order in matching engine: %v", err)
+			// Continue with database cancellation even if matching engine fails
+		}
+	}
+
+	// Update order status in database
 	now := time.Now()
 	order.Status = models.OrderStatusCancelled
 	order.CancelledAt = &now
@@ -273,6 +434,11 @@ func CancelOrder(c *gin.Context) {
 	if err := database.GetDB().Save(&order).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to cancel order"})
 		return
+	}
+
+	// Broadcast order update to user via WebSocket
+	if tradingHandlers != nil && tradingHandlers.hub != nil {
+		tradingHandlers.hub.BroadcastUserOrderUpdate(user.ID, order)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -283,21 +449,16 @@ func CancelOrder(c *gin.Context) {
 
 // CancelAllOrders cancels all open orders for a user
 func CancelAllOrders(c *gin.Context) {
-	userIDStr := c.Query("user_id")
-	if userIDStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
-
-	userID, err := strconv.ParseUint(userIDStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user_id"})
+	// Get authenticated user from context
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
 
 	now := time.Now()
 	result := database.GetDB().Model(&models.Order{}).
-		Where("user_id = ? AND status IN (?)", userID, []string{"open", "pending"}).
+		Where("user_id = ? AND status IN (?)", user.ID, []string{"open", "pending"}).
 		Updates(map[string]interface{}{
 			"status":       models.OrderStatusCancelled,
 			"cancelled_at": now,
@@ -317,20 +478,15 @@ func CancelAllOrders(c *gin.Context) {
 
 // GetOrderHistory returns order history
 func GetOrderHistory(c *gin.Context) {
-	userIDStr := c.Query("user_id")
-	if userIDStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id is required"})
-		return
-	}
-
-	userID, err := strconv.ParseUint(userIDStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user_id"})
+	// Get authenticated user from context
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
 
 	var orders []models.Order
-	if err := database.GetDB().Where("user_id = ?", userID).
+	if err := database.GetDB().Where("user_id = ?", user.ID).
 		Order("created_at DESC").
 		Find(&orders).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch order history"})
@@ -347,15 +503,15 @@ func GetOrderHistory(c *gin.Context) {
 
 // GetUserBalances returns user's balances
 func GetUserBalances(c *gin.Context) {
-	userIDStr := c.Param("userId")
-	userID, err := strconv.ParseUint(userIDStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+	// Get authenticated user from context
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
 
 	var balances []models.Balance
-	if err := database.GetDB().Where("user_id = ?", userID).Find(&balances).Error; err != nil {
+	if err := database.GetDB().Where("user_id = ?", user.ID).Find(&balances).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch balances"})
 		return
 	}
@@ -368,15 +524,15 @@ func GetUserBalances(c *gin.Context) {
 
 // GetUserOrders returns user's orders
 func GetUserOrders(c *gin.Context) {
-	userIDStr := c.Param("userId")
-	userID, err := strconv.ParseUint(userIDStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+	// Get authenticated user from context
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
 
 	var orders []models.Order
-	if err := database.GetDB().Where("user_id = ?", userID).
+	if err := database.GetDB().Where("user_id = ?", user.ID).
 		Order("created_at DESC").
 		Find(&orders).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch orders"})
@@ -391,15 +547,15 @@ func GetUserOrders(c *gin.Context) {
 
 // GetUserTrades returns user's trades
 func GetUserTrades(c *gin.Context) {
-	userIDStr := c.Param("userId")
-	userID, err := strconv.ParseUint(userIDStr, 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+	// Get authenticated user from context
+	user, exists := middleware.GetUserFromContext(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
 
 	var trades []models.Trade
-	if err := database.GetDB().Where("taker_user_id = ? OR maker_user_id = ?", userID, userID).
+	if err := database.GetDB().Where("taker_user_id = ? OR maker_user_id = ?", user.ID, user.ID).
 		Order("created_at DESC").
 		Find(&trades).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch trades"})
@@ -414,27 +570,9 @@ func GetUserTrades(c *gin.Context) {
 
 // WebSocket Handler
 func HandleWebSocket(c *gin.Context) {
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil {
-		logrus.Error("WebSocket upgrade failed:", err)
-		return
-	}
-	defer conn.Close()
-
-	// Handle WebSocket connection
-	for {
-		messageType, message, err := conn.ReadMessage()
-		if err != nil {
-			logrus.Error("WebSocket read error:", err)
-			break
-		}
-
-		// Echo message back (implement real-time data streaming here)
-		if err := conn.WriteMessage(messageType, message); err != nil {
-			logrus.Error("WebSocket write error:", err)
-			break
-		}
-	}
+	// Get the WebSocket hub
+	hub := GetWebSocketHub()
+	hub.HandleWebSocket(c)
 }
 
 // Admin Handlers

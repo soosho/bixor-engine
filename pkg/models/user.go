@@ -14,6 +14,7 @@ type User struct {
 	Username   string    `gorm:"unique;not null" json:"username"`
 	FirstName  string    `json:"first_name"`
 	LastName   string    `json:"last_name"`
+	Role       UserRole  `gorm:"not null;default:'user'" json:"role"`
 	IsActive   bool      `gorm:"default:true" json:"is_active"`
 	IsVerified bool      `gorm:"default:false" json:"is_verified"`
 	CreatedAt  time.Time `json:"created_at"`

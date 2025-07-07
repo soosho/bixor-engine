@@ -6,8 +6,8 @@ import (
 	"log"
 	"time"
 
-	"https://github.com/soosho/bixor-engine/pkg/config"
-	"https://github.com/soosho/bixor-engine/pkg/models"
+	"bixor-engine/pkg/config"
+	"bixor-engine/pkg/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -60,6 +60,13 @@ func AutoMigrate() error {
 		&models.Order{},
 		&models.Trade{},
 		&models.MarketData{},
+		// Auth models
+		&models.UserSession{},
+		&models.APIKey{},
+		&models.TwoFactorAuth{},
+		&models.LoginAttempt{},
+		&models.RateLimit{},
+		&models.UserPassword{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)

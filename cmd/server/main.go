@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -10,11 +9,11 @@ import (
 	"syscall"
 	"time"
 
-	"https://github.com/soosho/bixor-engine/internal/matching"
-	"https://github.com/soosho/bixor-engine/pkg/api"
-	"https://github.com/soosho/bixor-engine/pkg/cache"
-	"https://github.com/soosho/bixor-engine/pkg/config"
-	"https://github.com/soosho/bixor-engine/pkg/database"
+	"bixor-engine/internal/matching"
+	"bixor-engine/pkg/api"
+	"bixor-engine/pkg/cache"
+	"bixor-engine/pkg/config"
+	"bixor-engine/pkg/database"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -51,7 +50,8 @@ func main() {
 	}
 
 	// Initialize Redis cache
-	if err := cache.Initialize(cfg); err != nil {
+	redisCache, err := cache.Initialize(cfg)
+	if err != nil {
 		logrus.Fatalf("Failed to initialize Redis: %v", err)
 	}
 	defer cache.Close()
@@ -71,12 +71,39 @@ func main() {
 
 	// CORS configuration
 	corsConfig := cors.DefaultConfig()
-	corsConfig.AllowAllOrigins = true
-	corsConfig.AllowHeaders = []string{"Origin", "Content-Length", "Content-Type", "Authorization"}
+	// In production, specify allowed origins instead of allowing all
+	if cfg.IsDevelopment() {
+		corsConfig.AllowAllOrigins = true
+	} else {
+		corsConfig.AllowOrigins = []string{
+			"https://yourdomain.com", // Replace with your actual domain
+			"https://www.yourdomain.com",
+		}
+	}
+	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	corsConfig.AllowHeaders = []string{
+		"Origin", 
+		"Content-Length", 
+		"Content-Type", 
+		"Authorization",
+		"X-API-Key",
+		"X-API-Secret",
+	}
+	corsConfig.ExposeHeaders = []string{
+		"X-RateLimit-Limit",
+		"X-RateLimit-Remaining", 
+		"X-RateLimit-Reset",
+	}
+	corsConfig.AllowCredentials = true
+	corsConfig.MaxAge = 12 * time.Hour
 	router.Use(cors.New(corsConfig))
 
 	// Initialize API routes
-	api.SetupRoutes(router, engine, cfg)
+	api.SetupRoutes(router, engine, cfg, redisCache)
+
+	// Start WebSocket hub
+	hub := api.GetWebSocketHub()
+	go hub.Run(context.Background())
 
 	// Create HTTP server
 	server := &http.Server{

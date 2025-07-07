@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -12,7 +13,7 @@ type Config struct {
 	Server   ServerConfig
 	Database DatabaseConfig
 	Redis    RedisConfig
-	JWT      JWTConfig
+	Auth     AuthConfig
 	Trading  TradingConfig
 }
 
@@ -45,9 +46,29 @@ type RedisConfig struct {
 	PoolSize int
 }
 
-type JWTConfig struct {
-	SecretKey string
-	ExpiresIn time.Duration
+type AuthConfig struct {
+	// JWT settings
+	JWTSecret        string
+	AccessTokenTTL   int // seconds
+	RefreshTokenTTL  int // seconds
+	
+	// Rate limiting
+	RateLimitPerMinute int
+	RateLimitPerHour   int
+	RateLimitPerDay    int
+	
+	// 2FA settings
+	TOTPIssuer string
+	
+	// Session settings
+	SessionTimeout   int // seconds
+	MaxSessionsPerUser int
+	
+	// Security settings
+	RequireEmailVerification bool
+	RequireStrongPasswords   bool
+	LoginAttemptsLimit       int
+	LockoutDuration          int // seconds
 }
 
 type TradingConfig struct {
@@ -90,9 +111,29 @@ func Load() (*Config, error) {
 			Database: getIntEnv("REDIS_DATABASE", 0),
 			PoolSize: getIntEnv("REDIS_POOL_SIZE", 10),
 		},
-		JWT: JWTConfig{
-			SecretKey: getEnv("JWT_SECRET_KEY", "bixor-engine-secret-key"),
-			ExpiresIn: getDurationEnv("JWT_EXPIRES_IN", 24*time.Hour),
+		Auth: AuthConfig{
+			// JWT settings
+			JWTSecret:       getEnv("JWT_SECRET", "bixor-engine-secret-key-change-in-production"),
+			AccessTokenTTL:  getIntEnv("ACCESS_TOKEN_TTL", 3600),  // 1 hour
+			RefreshTokenTTL: getIntEnv("REFRESH_TOKEN_TTL", 86400), // 24 hours
+			
+			// Rate limiting
+			RateLimitPerMinute: getIntEnv("RATE_LIMIT_PER_MINUTE", 60),
+			RateLimitPerHour:   getIntEnv("RATE_LIMIT_PER_HOUR", 3600),
+			RateLimitPerDay:    getIntEnv("RATE_LIMIT_PER_DAY", 86400),
+			
+			// 2FA settings
+			TOTPIssuer: getEnv("TOTP_ISSUER", "Bixor Exchange"),
+			
+			// Session settings
+			SessionTimeout:     getIntEnv("SESSION_TIMEOUT", 86400), // 24 hours
+			MaxSessionsPerUser: getIntEnv("MAX_SESSIONS_PER_USER", 5),
+			
+			// Security settings
+			RequireEmailVerification: getBoolEnv("REQUIRE_EMAIL_VERIFICATION", false),
+			RequireStrongPasswords:   getBoolEnv("REQUIRE_STRONG_PASSWORDS", true),
+			LoginAttemptsLimit:       getIntEnv("LOGIN_ATTEMPTS_LIMIT", 5),
+			LockoutDuration:          getIntEnv("LOCKOUT_DURATION", 900), // 15 minutes
 		},
 		Trading: TradingConfig{
 			DefaultTakerFee:      getEnv("DEFAULT_TAKER_FEE", "0.001"),
@@ -102,6 +143,16 @@ func Load() (*Config, error) {
 			OrderBookDepth:       getIntEnv("ORDER_BOOK_DEPTH", 100),
 			CandlestickRetention: getDurationEnv("CANDLESTICK_RETENTION", 30*24*time.Hour),
 		},
+	}
+
+	// Validate critical security settings in production
+	if cfg.IsProduction() {
+		if cfg.Auth.JWTSecret == "bixor-engine-secret-key-change-in-production" {
+			return nil, fmt.Errorf("CRITICAL: JWT_SECRET must be set in production environment")
+		}
+		if len(cfg.Auth.JWTSecret) < 32 {
+			return nil, fmt.Errorf("CRITICAL: JWT_SECRET must be at least 32 characters in production")
+		}
 	}
 
 	return cfg, nil
@@ -127,6 +178,15 @@ func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
 	if value := os.Getenv(key); value != "" {
 		if duration, err := time.ParseDuration(value); err == nil {
 			return duration
+		}
+	}
+	return defaultValue
+}
+
+func getBoolEnv(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		if boolValue, err := strconv.ParseBool(value); err == nil {
+			return boolValue
 		}
 	}
 	return defaultValue
