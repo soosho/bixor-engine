@@ -344,32 +344,7 @@ func SendValidationErrors(c *gin.Context, errors ValidationErrors) {
 
 // Example usage functions for common validation patterns
 
-// ValidateRegistrationRequest validates user registration data
-func ValidateRegistrationRequest(req RegisterRequest) ValidationErrors {
-	validator := NewValidator()
-	
-	validator.ValidateEmail("email", req.Email)
-	validator.ValidateUsername("username", req.Username)
-	validator.ValidatePassword("password", req.Password)
-	validator.ValidateString("first_name", req.FirstName, 1, 50, false)
-	validator.ValidateString("last_name", req.LastName, 1, 50, false)
-	
-	return validator.GetErrors()
-}
 
-// ValidateLoginRequest validates user login data
-func ValidateLoginRequest(req LoginRequest) ValidationErrors {
-	validator := NewValidator()
-	
-	validator.ValidateEmail("email", req.Email)
-	validator.ValidateString("password", req.Password, 1, 128, true)
-	
-	if req.TotpCode != "" {
-		validator.ValidateTOTPCode("totp_code", req.TotpCode)
-	}
-	
-	return validator.GetErrors()
-}
 
 // ValidateCreateOrderRequest validates order creation data
 func ValidateCreateOrderRequest(req CreateOrderRequest) ValidationErrors {
@@ -388,21 +363,6 @@ func ValidateCreateOrderRequest(req CreateOrderRequest) ValidationErrors {
 }
 
 // Request structs with validation tags
-type RegisterRequest struct {
-	Email     string `json:"email"`
-	Username  string `json:"username"`
-	Password  string `json:"password"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-}
-
-type LoginRequest struct {
-	Email      string `json:"email"`
-	Password   string `json:"password"`
-	TotpCode   string `json:"totp_code,omitempty"`
-	BackupCode string `json:"backup_code,omitempty"`
-}
-
 type CreateOrderRequest struct {
 	MarketID string `json:"market_id"`
 	Side     int8   `json:"side"`

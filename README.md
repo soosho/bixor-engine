@@ -143,78 +143,60 @@ When using Docker, you can access the database admin interface at:
 
 ## API Documentation
 
-### Base URL
+Bixor Engine provides comprehensive API documentation with interactive Swagger UI:
+
+### 📖 Interactive Documentation
+- **Swagger UI**: `http://localhost:8080/docs/`
+- **OpenAPI JSON**: `http://localhost:8080/api/v1/openapi.json`
+- **OpenAPI YAML**: `http://localhost:8080/api/v1/openapi.yaml`
+
+### 🚀 Quick Start
+1. Start the server: `go run cmd/server/main.go`
+2. Open browser to: `http://localhost:8080/docs/`
+3. Use the "Try it out" button to test endpoints directly
+
+### 📚 Documentation Features
+- **Interactive Testing**: Test all endpoints directly from the browser
+- **Authentication Support**: Built-in JWT and API key authentication
+- **Request/Response Examples**: Complete schemas with example data
+- **Rate Limiting Info**: Clear rate limit documentation
+- **WebSocket Guide**: Real-time data streaming documentation
+- **Error Handling**: Comprehensive error response documentation
+
+### 🔗 API Categories
+- **Authentication**: User registration, login, 2FA, API keys
+- **Markets**: Order books, trades, statistics, candlestick data
+- **Trading**: Order management, trade execution
+- **User Data**: Balances, order history, trade history
+- **WebSocket**: Real-time market data and user notifications
+- **Admin**: System monitoring and management
+
+### 🎯 Base URL
 ```
 http://localhost:8080/api/v1
 ```
 
-### Market Endpoints
+### 🔐 Authentication
+The API supports both JWT Bearer tokens and API key authentication:
 
-#### Get All Markets
+**JWT Authentication:**
 ```http
-GET /markets
+Authorization: Bearer <your_jwt_token>
 ```
 
-#### Get Market Details
+**API Key Authentication:**
 ```http
-GET /markets/{marketId}
+X-API-Key: <your_api_key>
+X-API-Secret: <your_api_secret>
 ```
 
-#### Get Order Book
-```http
-GET /markets/{marketId}/orderbook?limit=50
-```
-
-#### Get Recent Trades
-```http
-GET /markets/{marketId}/trades?limit=100
-```
-
-### Order Management
-
-#### Create Order
-```http
-POST /orders
-Content-Type: application/json
-
-{
-  "market_id": "BTC-USDT",
-  "side": 1,  // 1 = Buy, 2 = Sell
-  "type": "limit",
-  "price": "50000.00",
-  "size": "0.001",
-  "user_id": 1
-}
-```
-
-#### Cancel Order
-```http
-DELETE /orders/{orderId}
-```
-
-#### Get User Orders
-```http
-GET /orders?user_id=1&market_id=BTC-USDT&status=open
-```
-
-### User Endpoints
-
-#### Get User Balances
-```http
-GET /users/{userId}/balances
-```
-
-#### Get User Trades
-```http
-GET /users/{userId}/trades
-```
-
-### WebSocket
-
-Connect to real-time data:
+### 🌐 WebSocket
+Real-time data streaming:
 ```javascript
 const ws = new WebSocket('ws://localhost:8080/api/v1/ws');
 ```
+
+For detailed API documentation, examples, and testing, visit: **`http://localhost:8080/docs/`**
 
 ## Configuration
 

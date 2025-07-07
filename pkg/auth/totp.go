@@ -5,7 +5,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base32"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
-	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/pbkdf2"
 )
 

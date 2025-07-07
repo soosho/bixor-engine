@@ -51,6 +51,9 @@ func SetupRoutes(router *gin.Engine, engine *matching.MatchingEngine, cfg *confi
 		})
 	})
 
+	// Setup Swagger documentation
+	setupSwagger(router)
+
 	// Apply global rate limiting to all routes
 	router.Use(rateLimitMiddleware.IPRateLimit(middleware.DefaultRateLimit))
 

@@ -16,6 +16,7 @@ const (
 	OrderStatusFilled    OrderStatus = "filled"
 	OrderStatusCancelled OrderStatus = "cancelled"
 	OrderStatusExpired   OrderStatus = "expired"
+	OrderStatusFailed    OrderStatus = "failed"
 )
 
 // OrderType represents the type of an order

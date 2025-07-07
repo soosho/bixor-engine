@@ -11,7 +11,7 @@ import (
 	"bixor-engine/pkg/database"
 	"bixor-engine/pkg/middleware"
 	"bixor-engine/pkg/models"
-	"bixor-engine/pkg/websocket"
+	wsocket "bixor-engine/pkg/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
@@ -20,11 +20,11 @@ import (
 // TradingHandlers contains trading-related handlers with matching engine
 type TradingHandlers struct {
 	engine *matching.MatchingEngine
-	hub    *websocket.WebSocketHub
+	hub    *wsocket.WebSocketHub
 }
 
 // NewTradingHandlers creates new trading handlers
-func NewTradingHandlers(engine *matching.MatchingEngine, hub *websocket.WebSocketHub) *TradingHandlers {
+func NewTradingHandlers(engine *matching.MatchingEngine, hub *wsocket.WebSocketHub) *TradingHandlers {
 	return &TradingHandlers{
 		engine: engine,
 		hub:    hub,
@@ -37,13 +37,13 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-var globalWSHub *websocket.WebSocketHub
+var globalWSHub *wsocket.WebSocketHub
 var globalTradingHandlers *TradingHandlers
 
 // GetWebSocketHub returns the global WebSocket hub instance
-func GetWebSocketHub() *websocket.WebSocketHub {
+func GetWebSocketHub() *wsocket.WebSocketHub {
 	if globalWSHub == nil {
-		globalWSHub = websocket.NewHub()
+		globalWSHub = wsocket.NewHub()
 	}
 	return globalWSHub
 }
